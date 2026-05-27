@@ -1,0 +1,43 @@
+#!/bin/bash
+set -euxo pipefail
+# ─────────────────────────────────────────────────────────────────────
+# Observability bootstrap — Prometheus + Grafana on AL2023
+#
+# Vars rendered by Terraform templatefile():
+#   repo_url      — git URL of the loopy-cloud repo
+#   region        — AWS region (Grafana CloudWatch datasource uses it)
+#   app_targets   — comma-joined "ip:port" pairs of every app instance
+#   grafana_pwd   — admin password for Grafana
+# ─────────────────────────────────────────────────────────────────────
+
+dnf update -y
+dnf install -y docker git
+systemctl enable --now docker
+usermod -aG docker ec2-user
+
+# docker compose v2 plugin
+mkdir -p /usr/local/lib/docker/cli-plugins
+curl -SL https://github.com/docker/compose/releases/download/v2.27.0/docker-compose-linux-x86_64 \
+  -o /usr/local/lib/docker/cli-plugins/docker-compose
+chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+
+cd /opt
+git clone ${repo_url} loopy || true
+cd loopy/observability
+
+# Render Prometheus scrape targets from the app instance private IPs.
+# (Prometheus scrapes /api/pay/metrics on each app's port 80 via nginx.)
+cat > prometheus.targets.json <<TARGETS
+[ { "targets": [ $(echo "${app_targets}" | awk -F, '{
+  for(i=1;i<=NF;i++){ printf "%s\"%s\"", (i>1?",":""), $i }
+}') ],
+    "labels":  { "service": "payments", "env": "dev" }
+  }
+]
+TARGETS
+
+# Export env for compose
+export AWS_REGION=${region}
+export GRAFANA_ADMIN_PASSWORD=${grafana_pwd}
+
+docker compose up -d --build

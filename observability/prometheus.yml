@@ -1,0 +1,30 @@
+# ─────────────────────────────────────────────────────────────────────
+#  Prometheus scrape config — observability EC2
+#  • Self-scrapes Prometheus and the Grafana process.
+#  • File-based service discovery from targets.json (rendered at boot
+#    by Terraform user-data with the private IPs of every app EC2).
+#  • Hits the payments service's /metrics endpoint THROUGH the per-host
+#    nginx gateway, so this works regardless of how many app instances
+#    you scale to.
+# ─────────────────────────────────────────────────────────────────────
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: loopy
+    env:     dev
+
+scrape_configs:
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: loopy-payments
+    metrics_path: /api/pay/metrics
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets.json"]
+        refresh_interval: 30s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label:  instance

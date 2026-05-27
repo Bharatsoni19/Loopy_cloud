@@ -1,0 +1,280 @@
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   LOOP CARDS — client logic
+   Talks to the Loopy Pay microservice. Derives the pay base URL from
+   the existing BACKEND (port 8000 → 8100); override via:
+       localStorage.loopy_pay_base = 'https://your-host:8100'
+   ═══════════════════════════════════════════════════════════════ */
+const LC_THEMES = ['aurora','midnight','sunset','matrix','candy','gold'];
+const LC_SWATCH = {aurora:'#4f46e5',midnight:'#0f172a',sunset:'#db2777',
+                   matrix:'#16a34a',candy:'#db2777',gold:'#d97706'};
+
+const LoopPay = {
+  base() {
+    return localStorage.getItem('loopy_pay_base')
+        || (typeof LOOPY_DEV !== 'undefined' && !LOOPY_DEV
+              ? GW + '/api/pay' : 'http://localhost:8100');
+  },
+  ragBase() {
+    return localStorage.getItem('loopy_rag_base')
+        || (typeof LOOPY_DEV !== 'undefined' && !LOOPY_DEV
+              ? GW + '/api/rag' : 'http://localhost:8200');
+  },
+  token: null,
+  uid() { return (typeof APP !== 'undefined' && APP.userId) ? APP.userId : 'guest'; },
+  name() { return (typeof APP !== 'undefined' && APP.displayName) ? APP.displayName : 'Guest'; },
+
+  async session() {                       // mint a JWT for this user
+    if (this.token) return this.token;
+    const r = await fetch(this.base() + '/auth/token', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ user_id:this.uid(), username:this.name() })
+    });
+    this.token = (await r.json()).access_token;
+    return this.token;
+  },
+  async req(path, method='GET', body=null, idem=null) {
+    const t = await this.session();
+    const headers = {'Authorization':'Bearer '+t, 'Content-Type':'application/json'};
+    if (idem) headers['Idempotency-Key'] = idem;
+    const r = await fetch(this.base()+path, {method, headers,
+      body: body ? JSON.stringify(body) : null,
+      signal: AbortSignal.timeout(5000)});
+    if (!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || r.status);
+    return r.json();
+  },
+  // keep the backend coin balance in step with the in-app coin wallet
+  async syncCoins() {
+    try {
+      const w = await this.req('/wallet');
+      const local = (typeof getCoins==='function') ? getCoins() : 0;
+      if (local > w.coins) await this.req('/coins/grant?amount='+(local - w.coins),'POST');
+    } catch(e) {}
+  },
+  online: false,
+};
+
+/* ── render the Loop Cards view ─────────────────────────────── */
+let LC_NEW_THEME = 'aurora';
+let LC_CARDS = [];
+
+async function openLoopCards() {
+  document.querySelectorAll('.platform-tab').forEach(t=>t.classList.remove('on'));
+  const tab = document.querySelector('.platform-tab[data-view="loopcards"]');
+  if (tab) tab.classList.add('on');
+  const vi = document.getElementById('vi');
+  if (!vi) return;
+  vi.innerHTML = `<div class="lc-head">Loop Cards
+      <span class="lc-pay-pip"><span class="pip pip-off" id="lc-pip"></span>Loopy&nbsp;Pay</span></div>
+    <div class="lc-sub">Prepaid music-time cards · recharge +60 min · share &amp; gift to friends · synced to the cloud</div>
+    <div id="lc-body" style="color:var(--txt3);font-size:13px">Connecting to Loopy Pay…</div>`;
+  await refreshLoopCards();
+}
+
+async function refreshLoopCards() {
+  const body = document.getElementById('lc-body');
+  try {
+    await LoopPay.syncCoins();
+    const w = await LoopPay.req('/wallet');
+    LC_CARDS = w.cards;
+    LoopPay.online = true;
+    const pip = document.getElementById('lc-pip');
+    if (pip) pip.className = 'pip pip-on';
+    body.innerHTML = `
+      <div class="lc-coin-line">
+        <svg width="16" height="16" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#f59e0b"/><text x="12" y="17" text-anchor="middle" font-size="12" font-weight="900" fill="white" font-family="sans-serif">L</text></svg>
+        ${w.coins} coins available · 120 coins = +60 min
+      </div>
+      <div class="lc-grid" id="lc-grid">
+        ${LC_CARDS.map(renderCard).join('')}
+        <div class="lc-newcard" onclick="lcCreateModal()">
+          <svg viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="3"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+          <div style="font-size:13px;font-weight:700">Create a Loop Card</div>
+        </div>
+      </div>`;
+    startLcTimers();
+  } catch (e) {
+    LoopPay.online = false;
+    body.innerHTML = `<div style="background:var(--card);border:1.5px solid var(--border2);
+      border-radius:14px;padding:18px;line-height:1.7">
+      <b>Loopy Pay backend not reachable.</b><br>
+      Start it with <code style="font-family:var(--mono);color:var(--accent)">uvicorn app:app --port 8100</code>
+      inside <code style="font-family:var(--mono)">services/payments</code>, or set
+      <code style="font-family:var(--mono)">localStorage.loopy_pay_base</code>.<br>
+      <span style="color:var(--txt3);font-size:12px">(${e.message||e})</span></div>`;
+  }
+}
+
+function renderCard(c) {
+  const mins = c.minutes;
+  const live = c.live;
+  const shared = (c.shared_with||[]).map(u=>
+    `<div class="lc-av">${(u[0]||'?').toUpperCase()}</div>`).join('');
+  return `<div>
+    <div class="loopcard lc-${c.theme}" onclick="lcLedger('${c.card_id}')">
+      <div class="lc-top">
+        <div class="lc-brand">Loopy · Music Time</div>
+        <div class="lc-chip"></div>
+      </div>
+      <div class="lc-name">${c.name}</div>
+      <div class="lc-pan">${c.pan}</div>
+      <div class="lc-bottom">
+        <div>
+          <div class="lc-mins">${mins}<small>min banked</small></div>
+          ${shared ? `<div class="lc-shared">${shared}</div>` : ''}
+        </div>
+        <div class="lc-timer ${live?'live':''}" data-until="${c.active_until}" id="t-${c.card_id}">
+          ${live ? 'live' : 'expired'}
+        </div>
+      </div>
+    </div>
+    <div class="lc-actions">
+      <button class="lc-btn lc-btn-primary" onclick="lcRecharge('${c.card_id}')">
+        <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        +60 min</button>
+      <button class="lc-btn lc-btn-ghost" onclick="lcShareModal('${c.card_id}')">
+        <svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.5"/><line x1="15.4" y1="6.5" x2="8.6" y2="10.5"/></svg>
+        Share</button>
+      <button class="lc-btn lc-btn-ghost" onclick="lcTransferModal('${c.card_id}')">
+        <svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+        Gift min</button>
+    </div></div>`;
+}
+
+/* live 60-minute countdown on every card */
+let LC_TIMER_INT = null;
+function startLcTimers() {
+  if (LC_TIMER_INT) clearInterval(LC_TIMER_INT);
+  const tick = () => {
+    document.querySelectorAll('.lc-timer').forEach(el => {
+      const until = parseFloat(el.dataset.until) * 1000;
+      const left = until - Date.now();
+      if (left <= 0) { el.textContent = 'expired'; el.classList.remove('live'); return; }
+      const m = Math.floor(left/60000), s = Math.floor((left%60000)/1000);
+      el.textContent = `${m}:${String(s).padStart(2,'0')} left`;
+      el.classList.add('live');
+    });
+  };
+  tick(); LC_TIMER_INT = setInterval(tick, 1000);
+}
+
+/* ── actions ────────────────────────────────────────────────── */
+async function lcRecharge(cardId) {
+  try {
+    const idem = 'rc_'+cardId+'_'+Date.now();
+    const r = await LoopPay.req('/cards/'+cardId+'/recharge','POST',null,idem);
+    // reflect coin spend in the in-app wallet
+    if (typeof getCoins==='function') {
+      const w = await LoopPay.req('/wallet');
+      localStorage.setItem('loopy_coins_v2', w.coins);
+      const cd = document.getElementById('coin-display'); if (cd) cd.textContent = w.coins;
+    }
+    if (typeof showCoinToast==='function') showCoinToast('Loop Card recharged · +60 min ⚡');
+    refreshLoopCards();
+  } catch(e) {
+    if (typeof showCoinToast==='function') showCoinToast('Recharge failed: '+(e.message||e));
+  }
+}
+
+function lcCreateModal() {
+  LC_NEW_THEME = 'aurora';
+  lcModal(`<h3>New Loop Card</h3><p>Pick a look. Recharge it to bank 60-minute passes.</p>
+    <input class="lc-input" id="lc-name-in" placeholder="Card name (e.g. Gym Mix Pass)" value="My Loop Card">
+    <div class="lc-theme-row" id="lc-theme-row">
+      ${LC_THEMES.map(t=>`<div class="lc-swatch ${t==='aurora'?'on':''}" data-theme="${t}"
+          style="background:${LC_SWATCH[t]}" onclick="lcPickTheme('${t}')"></div>`).join('')}
+    </div>
+    <div class="loopcard lc-aurora" id="lc-preview" style="margin:14px 0;max-width:260px">
+      <div class="lc-top"><div class="lc-brand">Loopy · Music Time</div><div class="lc-chip"></div></div>
+      <div class="lc-name">My Loop Card</div><div class="lc-pan">•••• •••• •••• ••••</div>
+    </div>
+    <button class="lc-btn lc-btn-primary" style="width:100%" onclick="lcCreate()">Create card</button>`);
+  const inp = document.getElementById('lc-name-in');
+  inp.oninput = () => { document.querySelector('#lc-preview .lc-name').textContent = inp.value||'My Loop Card'; };
+}
+function lcPickTheme(t) {
+  LC_NEW_THEME = t;
+  document.querySelectorAll('#lc-theme-row .lc-swatch').forEach(s=>
+    s.classList.toggle('on', s.dataset.theme===t));
+  const pv = document.getElementById('lc-preview');
+  pv.className = 'loopcard lc-'+t; pv.style.margin='14px 0'; pv.style.maxWidth='260px';
+}
+async function lcCreate() {
+  const name = (document.getElementById('lc-name-in').value||'My Loop Card').trim();
+  try {
+    await LoopPay.req('/cards','POST',{name, theme:LC_NEW_THEME},'mk_'+Date.now());
+    lcClose(); refreshLoopCards();
+  } catch(e){ alert('Could not create card: '+(e.message||e)); }
+}
+
+function lcShareModal(cardId) {
+  lcModal(`<h3>Share this card</h3>
+    <p>Give a friend permission to listen on your card's minutes.</p>
+    <input class="lc-input" id="lc-friend-in" placeholder="Friend username (e.g. riya)">
+    <button class="lc-btn lc-btn-primary" style="width:100%" onclick="lcShare('${cardId}')">Grant access</button>`);
+}
+async function lcShare(cardId) {
+  const f = (document.getElementById('lc-friend-in').value||'').trim();
+  if (!f) return;
+  try { await LoopPay.req('/cards/'+cardId+'/share','POST',{friend_id:f}); lcClose(); refreshLoopCards(); }
+  catch(e){ alert('Share failed: '+(e.message||e)); }
+}
+
+function lcTransferModal(cardId) {
+  lcModal(`<h3>Gift minutes</h3>
+    <p>Transfer banked minutes to a friend. Conserved by the ledger — nothing is lost.</p>
+    <input class="lc-input" id="lc-to-in" placeholder="Friend username">
+    <input class="lc-input" id="lc-min-in" type="number" value="30" min="1" placeholder="Minutes">
+    <button class="lc-btn lc-btn-primary" style="width:100%" onclick="lcTransfer('${cardId}')">Send minutes</button>`);
+}
+async function lcTransfer(cardId) {
+  const to = (document.getElementById('lc-to-in').value||'').trim();
+  const min = parseInt(document.getElementById('lc-min-in').value||'0');
+  if (!to || min<=0) return;
+  try {
+    const r = await LoopPay.req('/cards/'+cardId+'/transfer','POST',
+      {to_user:to, minutes:min}, 'tx_'+Date.now());
+    lcClose();
+    if (typeof showCoinToast==='function') showCoinToast(`Gifted ${min} min · ref ${r.end_to_end_id.slice(-6)}`);
+    refreshLoopCards();
+  } catch(e){ alert('Transfer failed: '+(e.message||e)); }
+}
+
+async function lcLedger(cardId) {
+  try {
+    const j = await LoopPay.req('/cards/'+cardId+'/journal');
+    const rows = j.entries.map(e=>`<div class="lc-ledger-row">
+      <span>${e.txn_type}</span>
+      <span>${e.delta_minutes>0?'+':''}${e.delta_minutes} min</span>
+      <span>${new Date(e.ts*1000).toLocaleTimeString()}</span></div>`).join('') ||
+      '<div style="color:var(--txt3)">No activity yet.</div>';
+    lcModal(`<h3>Card ledger</h3><p>Every minute movement, double-entry &amp; auditable.</p>
+      <div class="lc-ledger">${rows}</div>`);
+  } catch(e){}
+}
+
+/* tiny modal helpers */
+function lcModal(html) {
+  lcClose();
+  const bg = document.createElement('div');
+  bg.className='lc-modal-bg'; bg.id='lc-modal-bg';
+  bg.onclick = (e)=>{ if(e.target===bg) lcClose(); };
+  bg.innerHTML = `<div class="lc-modal">${html}</div>`;
+  document.body.appendChild(bg);
+}
+function lcClose(){ const m=document.getElementById('lc-modal-bg'); if(m) m.remove(); }
+
+/* ── SYNC ALONG: spend minutes from the live card as you listen ──
+   Every 60s of playback debits 1 minute from the first live card and
+   syncs it to the backend (which archives the event to S3 for Glue). */
+setInterval(async () => {
+  try {
+    if (typeof APP==='undefined' || !APP.playing || !LoopPay.online) return;
+    const live = (LC_CARDS||[]).find(c=>c.live && c.minutes>0);
+    if (!live) return;
+    await LoopPay.req('/cards/'+live.card_id+'/redeem','POST',{minutes:1},
+      'rd_'+live.card_id+'_'+Math.floor(Date.now()/60000));
+    live.minutes = Math.max(0, live.minutes-1);
+  } catch(e){}
+}, 60000);
+</script>

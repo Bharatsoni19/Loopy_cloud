@@ -1,0 +1,120 @@
+{
+  "title": "Loopy — Overview",
+  "uid": "loopy-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "timezone": "browser",
+  "tags": ["loopy", "payments", "infra"],
+  "panels": [
+
+    {
+      "id": 1, "type": "stat", "title": "Payments — txns total (all instances)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" },
+      "targets": [
+        { "expr": "sum(loopy_pay_txn_total)", "legendFormat": "txns", "refId": "A" }
+      ]
+    },
+
+    {
+      "id": 2, "type": "stat", "title": "Payments — errors total",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [
+            { "value": null, "color": "green" },
+            { "value": 1,    "color": "yellow" },
+            { "value": 25,   "color": "red" }
+          ]}
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "targets": [
+        { "expr": "sum(loopy_pay_errors_total)", "legendFormat": "errors", "refId": "A" }
+      ]
+    },
+
+    {
+      "id": 3, "type": "stat", "title": "Healthy app hosts",
+      "datasource": { "type": "cloudwatch", "uid": "cloudwatch" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "namespace": "AWS/ApplicationELB",
+          "metricName": "HealthyHostCount",
+          "statistic": "Average",
+          "dimensions": {}
+        }
+      ]
+    },
+
+    {
+      "id": 4, "type": "stat", "title": "Unhealthy app hosts",
+      "datasource": { "type": "cloudwatch", "uid": "cloudwatch" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [
+            { "value": null, "color": "green" },
+            { "value": 1,    "color": "red"   }
+          ]}
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "targets": [
+        {
+          "refId": "A",
+          "namespace": "AWS/ApplicationELB",
+          "metricName": "UnHealthyHostCount",
+          "statistic": "Average",
+          "dimensions": {}
+        }
+      ]
+    },
+
+    {
+      "id": 5, "type": "timeseries", "title": "Payments — txns/sec by instance",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        { "expr": "rate(loopy_pay_txn_total[1m])", "legendFormat": "{{instance}}", "refId": "A" }
+      ]
+    },
+
+    {
+      "id": 6, "type": "timeseries", "title": "ALB — request count & 5xx",
+      "datasource": { "type": "cloudwatch", "uid": "cloudwatch" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        { "refId": "A", "namespace": "AWS/ApplicationELB", "metricName": "RequestCount",                  "statistic": "Sum" },
+        { "refId": "B", "namespace": "AWS/ApplicationELB", "metricName": "HTTPCode_Target_5XX_Count",     "statistic": "Sum" },
+        { "refId": "C", "namespace": "AWS/ApplicationELB", "metricName": "HTTPCode_Target_4XX_Count",     "statistic": "Sum" }
+      ]
+    },
+
+    {
+      "id": 7, "type": "timeseries", "title": "ALB — target response time (avg & p99)",
+      "datasource": { "type": "cloudwatch", "uid": "cloudwatch" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "targets": [
+        { "refId": "A", "namespace": "AWS/ApplicationELB", "metricName": "TargetResponseTime", "statistic": "Average" },
+        { "refId": "B", "namespace": "AWS/ApplicationELB", "metricName": "TargetResponseTime", "statistic": "p99"     }
+      ]
+    },
+
+    {
+      "id": 8, "type": "timeseries", "title": "EC2 — CPU per app instance",
+      "datasource": { "type": "cloudwatch", "uid": "cloudwatch" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "targets": [
+        { "refId": "A", "namespace": "AWS/EC2", "metricName": "CPUUtilization", "statistic": "Average" }
+      ]
+    }
+
+  ]
+}

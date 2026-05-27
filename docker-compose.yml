@@ -1,0 +1,49 @@
+# ═══════════════════════════════════════════════════════════════
+#  Loopy — full-stack orchestration
+#  nginx gateway  →  payments (8100) · neural (8000) · rag (8200)
+#  One command brings up the whole platform: `docker compose up -d --build`
+# ═══════════════════════════════════════════════════════════════
+services:
+
+  gateway:
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./frontend:/usr/share/nginx/html:ro
+    depends_on: [payments, neural, rag]
+    restart: unless-stopped
+
+  payments:
+    build: ./services/payments
+    environment:
+      LOOPY_JWT_SECRET: ${LOOPY_JWT_SECRET:-dev-only-change-me}
+      LOOPY_RAW_BUCKET: ${LOOPY_RAW_BUCKET:-}      # set on EC2 to enable S3 sync
+      AWS_REGION: ${AWS_REGION:-ap-south-1}
+      LOOPY_PAY_DSN: /data/loopy_pay.db
+    volumes:
+      - pay_data:/data
+    expose: ["8100"]
+    restart: unless-stopped
+
+  neural:
+    build: ./services/neural
+    volumes:
+      - neural_models:/app/loopy_models
+      - neural_data:/app/loopy_data
+    expose: ["8000"]
+    restart: unless-stopped
+
+  rag:
+    build: ./services/rag
+    environment:
+      LOOPY_LLM: ${LOOPY_LLM:-none}                # set to 'bedrock' on AWS
+      AWS_REGION: ${AWS_REGION:-ap-south-1}
+    expose: ["8200"]
+    restart: unless-stopped
+
+volumes:
+  pay_data:
+  neural_models:
+  neural_data:

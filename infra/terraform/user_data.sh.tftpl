@@ -1,0 +1,22 @@
+#!/bin/bash
+set -euxo pipefail
+# ── EC2 bootstrap: Docker host for the Loopy stack ──
+dnf update -y
+dnf install -y docker git
+systemctl enable --now docker
+usermod -aG docker ec2-user
+
+# docker compose v2 plugin
+mkdir -p /usr/local/lib/docker/cli-plugins
+curl -SL https://github.com/docker/compose/releases/download/v2.27.0/docker-compose-linux-x86_64 \
+  -o /usr/local/lib/docker/cli-plugins/docker-compose
+chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+
+# pull the app and launch
+cd /opt
+git clone ${repo_url} loopy || true
+cd loopy
+export LOOPY_RAW_BUCKET=${raw_bucket}
+export AWS_REGION=${region}
+export LOOPY_JWT_SECRET="$(openssl rand -hex 24)"
+docker compose up -d --build

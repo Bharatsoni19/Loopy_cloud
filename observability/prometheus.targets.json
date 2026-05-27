@@ -1,0 +1,6 @@
+[
+  {
+    "targets": ["gateway:80"],
+    "labels":  { "service": "payments", "env": "dev" }
+  }
+]

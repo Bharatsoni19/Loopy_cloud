@@ -1,0 +1,40 @@
+# ═══════════════════════════════════════════════════════════════════════
+#  Observability stack — runs on the dedicated observability EC2.
+#  Prometheus scrapes every app instance's /api/pay/metrics endpoint.
+#  Grafana renders Prometheus + CloudWatch as a single overview dashboard.
+# ═══════════════════════════════════════════════════════════════════════
+services:
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    ports: ["9090:9090"]
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus.targets.json:/etc/prometheus/targets.json:ro
+      - prom_data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    ports: ["3000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-loopy-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_INSTALL_PLUGINS: grafana-clock-panel
+      AWS_REGION: ${AWS_REGION:-ap-south-1}
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - graf_data:/var/lib/grafana
+    depends_on: [prometheus]
+    restart: unless-stopped
+
+volumes:
+  prom_data:
+  graf_data:

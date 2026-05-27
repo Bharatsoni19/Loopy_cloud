@@ -1,0 +1,16 @@
+.git/
+.github/
+.gitignore
+.dockerignore
+docs/
+infra/
+glue/
+scripts/
+README.md
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/*.log
+.env
+.env.local
+services/payments/loopy_pay.db*
